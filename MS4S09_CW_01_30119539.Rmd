@@ -1,0 +1,907 @@
+---
+title: "Data Mining (CS4S767) - Practical Coursework 1"
+author: "Nitharshana Thayanantham (Student Number - 30119539)"
+date: "`r Sys.Date()`"
+output:
+  word_document:
+    toc: true
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## **1. Task A - Text Mining**
+
+The goal is to preprocess and analyze the text data in the description column of the data set to gain insights and visualize trends. 
+
+### **1.1 Loading and Inspecting the Data**
+
+### **1.1.1 Loading Necessary Libraries**
+
+To ensure that the necessary functions are available, the required libraries must be installed and loaded.
+
+```{r library , install &Load , message = FALSE}
+
+libraries <- c("tm","readr", "tidytext", "ggplot2", "wordcloud", "dplyr", "textstem", "textdata","tidyr","tidyverse","SnowballC","igraph","ggraph","naniar","lubridate","topicmodels","cluster","factoextra","textmineR","LDAvis","servr","sentimentr","slam","stm","stopwords")
+
+#install.packages(libraries) # Comment out after first execution
+
+for (lib in libraries) { 
+  library(lib, character.only=TRUE)
+}
+
+```
+
+### **1.1.2 Reading the Dataset**
+
+The dataset is imported using read_csv()
+
+```{r Load Dataset, message=FALSE, warning=FALSE}
+file_path <- "E:/USW/sem02/datamining/assignment01/submission/MS4S09_CW_Reviews.csv"
+# Load the dataset
+df <- read_csv(file_path, locale = locale(encoding = "latin1"))
+# Display the first few rows
+head(df)
+```
+
+### **1.1.3 Checking Dataset Structure**
+
+To understand the dataset's structure, the str() function is applied, displaying the column names along with their data types.
+
+```{r Check dataset}
+# Check dataset structure
+str(df)
+```
+
+Additionally, the summary() function is utilized to obtain descriptive statistics for numerical columns.
+
+```{r Summary Dataset}
+# Summary statistics of the dataset
+summary(df)
+```
+
+
+### **1.2. Handling Missing Data**
+
+Upon identifying the presence of missing values, appropriate strategies are implemented.
+
+### **1.2.1 Identifying Missing Values**
+
+To determine the extent of missing data, the number of missing values in each column is counted.
+
+```{r Missing Column}
+# Count missing values per column
+colSums(is.na(df))
+```
+
+### **1.2.2 Removing or Imputing Missing Values**
+
+**For text-based analysis (description column)**
+
+Reviews with missing description values are removed, as they provide no textual information.This is executed using the filter() function.
+
+**For numerical data (points and price columns)**
+
+-   Missing values in points can be imputed with the median score.
+
+-   Missing values in price can also be imputed using the median, as price distributions are often skewed.
+
+```{r Removing or Imputing}
+# Remove rows where 'description' is missing
+df <- df %>% filter(!is.na(description))
+
+# Impute missing numerical values with median
+df$points[is.na(df$points)] <- median(df$points, na.rm = TRUE)
+df$price[is.na(df$price)] <- median(df$price, na.rm = TRUE)
+
+# Count missing values per column
+colSums(is.na(df))
+```
+
+In my analysis, sentiment was evaluated based on points, but price was not incorporated. However, in future analyses, price will be included to examine its correlation with sentiment for deeper insights.
+
+The points and price columns initially had 4,336 and 12,953 missing values, respectively. While these did not impact the analysis, retaining the rows was crucial for accuracy. After applying imputation techniques, missing values in points and price were reduced to zero. Description initially had (4336) missing values which is removed from dataset. 
+
+Before handling missing values, several columns had significant missing entries, with designation (40,272), region_2 (80,488), and taster_twitter_handle (34,063) . And other columns, such as region_1, region_2, and taster_name, retained missing values as they were not used in the analysis.
+
+
+### **1.3. Handling Outliers**
+
+There are only two numeric columns in the dataset such as price and points. I used the Interquartile Range (IQR) method to detect and highlight outliers through overlaid boxplots. 
+
+Upon analysis, I found that the price column contains outlier values, whereas the points column does not have any outliers. To handle the outliers in the price column, I applied a capping strategy, replacing the outlier values with their respective boundary values (lower or upper bounds) to ensure the data remains consistent and usable for analysis.
+
+**Outliers in points and price are identified using boxplots.**
+
+```{r Visualize outliers}
+boxplot(df$points, main = "Boxplot of Wine Points")
+boxplot(df$price, main = "Boxplot of Wine Prices")
+```
+
+**Outliers are replaced with the interquartile range (IQR) method.**
+
+```{r Outliers replaced}
+# Define IQR limits for price
+Q1 <- quantile(df$price, 0.25, na.rm = TRUE)
+Q3 <- quantile(df$price, 0.75, na.rm = TRUE)
+IQR_value <- Q3 - Q1
+
+# Define lower and upper bounds
+lower_bound <- Q1 - 1.5 * IQR_value
+upper_bound <- Q3 + 1.5 * IQR_value
+
+# Replace extreme values with upper bound
+df$price[df$price > upper_bound] <- upper_bound
+df$price[df$price < lower_bound] <- lower_bound
+
+boxplot(df$points, main = "Boxplot of Wine Points After Handle Outliers")
+boxplot(df$price, main = "Boxplot of Wine Prices After Handle Outliers")
+```
+
+### **1.4. Sampling the Data**
+
+The dataset, containing 133,189 rows, was considered quite large. For computational power concerns, a subset of 20,000 reviews was sampled for quicker analysis.
+
+**Description** contains the wine reviews written by tasters. This is the primary column for this analysis. title might contain useful keywords but is less relevant than description. and **points** can be use in sentiment analysis.
+
+```{r Sample data}
+# Sample 20,000 rows randomly for analysis
+set.seed(123)  # Ensures reproducibility
+df_sampled <- df %>% sample_n(20000)
+```
+
+### **1.5. Text Preprocessing for Analysis**
+
+Before conducting Text Mining, Sentiment Analysis, and Topic Modelling, the text data must be cleaned.
+
+```{r Description column}
+#Before Cleaning Data
+head(df_sampled$description)
+```
+
+### **1.5.1 Apply Text Preprocessing**
+
+Preprocessing cleans and prepares text data for analysis by removing noise and irrelevant information. 
+
+Key techniques include:
+
+-   **Lowercasing:** Convert all text to lowercase for uniformity and maintain consistency.
+
+-   **Removing Punctuation:** Remove all punctuation marks to focus only on meaningful words.
+
+-   **Removing Numbers:** Remove numeric values unless they are relevant.
+
+-   **Removing Special Characters:** Clean up non-alphabetic characters.
+
+-   **Removing Stop Words:** Eliminate common words that do not add meaning.
+
+-   **Tokenization:** Split text into individual words or tokens.
+
+-   **Stemming:** Reduce words to their root forms.
+
+-   **Lemmatization:** Convert words to their base forms based on context.
+
+-   **N-grams:** Generate sequences of n words to identify common phrases.
+  
+```{r Preprocessing Tokenization }
+# Convert encoding and remove problematic characters
+df_sampled$description <- iconv(df_sampled$description, from = "latin1", to = "UTF-8", sub = "")
+df_sampled$description <- gsub("[^[:alnum:] ]", "", df_sampled$description)
+
+# Lowercase
+df_sampled$description <- tolower(df_sampled$description)
+
+# Tokenization and stop words removal
+data_clean <- df_sampled %>%
+  unnest_tokens(word, description) %>%
+  anti_join(stop_words, by = "word")
+
+# Define a custom stopword list (combine predefined and custom words)
+custom_stopwords <- c(stopwords("en"), "wine", "flavors", "taste", "bottle", "glass", "drink")
+
+# Remove meaningless words (stopwords)
+data_clean <- data_clean %>%
+  filter(!word %in% custom_stopwords)
+
+print(head(data_clean))
+```
+
+```{r Preprocessing Lemmatization }
+ # Remove special characters
+data_clean$word <- gsub("[^a-zA-Z\\s]", "", data_clean$word)
+
+# Remove numbers
+data_clean$word <- gsub("[0-9]", "", data_clean$word) 
+
+# Remove NA and empty words
+data_clean <- data_clean %>%
+  filter(!is.na(word) & word != "")
+
+#Removing Punctuation
+data_clean$word <- gsub("[[:punct:]]", "", data_clean$word)
+
+# Stemming
+data_clean$stemmed_word <- wordStem(data_clean$word)
+
+# Lemmatization
+data_clean$lemmatized_word <- textstem::lemmatize_words(data_clean$stemmed_word)
+
+print(head(data_clean))
+```
+
+### **1.5.2 Exploratory Visualization**
+
+The goal is to understand frequent words in wine reviews before moving to deeper analysis. The following visualizations will be generated: Bar Chart
+
+**Bar Chart- Displays the top 20 most frequent words after cleaning.**
+
+The most common words used by wine tasters are displayed. This helps identify recurring themes in customer reviews.
+
+```{r}
+#  Top words before stemming and lemmatization
+word_freq <- data_clean %>%
+  count(word, sort = TRUE) %>%
+  slice_max(n, n = 20)  # Select top 20 most frequent words
+
+# Create the bar chart
+ggplot(word_freq, aes(x = reorder(word, n), y = n)) +
+  geom_bar(stat = "identity", fill = "#AA104F") +
+  coord_flip() +
+  labs(title = "Top 20 Frequent Words before stemming and lemmatization",
+       x = "Words", y = "Frequency") +
+  theme_minimal()
+
+#  Top words After stemming and lemmatization
+word_freq <- data_clean %>%
+  count(lemmatized_word, sort = TRUE) %>%
+  slice_max(n, n = 20)  # Select top 20 most frequent words
+
+# Create the bar chart
+ggplot(word_freq, aes(x = reorder(lemmatized_word, n), y = n)) +
+  geom_bar(stat = "identity", fill = "#2C6E49") +
+  coord_flip() +
+  labs(title = "Top 20 Frequent Words after stemming and lemmatization",
+       x = "Words", y = "Frequency") +
+  theme_minimal()
+```
+
+
+**Word cloud - Shows the most frequent words in reviews.**
+
+Larger words indicate more frequent words in the dataset.Words like "aroma", "fruit", "tannin" may appear frequently in wine reviews.
+
+```{r word cloud}
+# Word cloud Before Lemmatization
+word_freq <- data_clean %>%
+  count(word, sort = TRUE)
+
+par(mar = c(0, 0, 0, 0))
+wordcloud(words = word_freq$word, freq = word_freq$n, 
+          max.words = 100, colors = brewer.pal(8, "RdGy"), scale = c(3, 0.5)) 
+title("Word Cloud Before Lemmatization", line = -1)
+
+# Word cloud after Lemmatization
+lemma_freq <- data_clean %>%
+  count(lemmatized_word, sort = TRUE)
+
+par(mar = c(0, 0, 0, 0))
+wordcloud(words = lemma_freq$lemmatized_word, freq = lemma_freq$n, 
+          max.words = 100, colors = brewer.pal(8, "Dark2"), scale = c(3, 0.5)) 
+title("Word Cloud after Lemmatization", line = -1)
+```
+
+**Before Cleaning:**
+
+-   The dataset contained numbers, special characters, and stopwords, which distorted word frequency analysis.
+
+-   The most frequent words included irrelevant words such as “the,” “and,” and “is,” which did not contribute to meaningful insights.
+
+**After Cleaning:** - Numbers and special characters were successfully removed.
+
+-   Stopwords were eliminated, and words were standardized using lemmatization.
+
+-   The word cloud and bar chart showed more meaningful words related to wine characteristics (e.g., “fruity,” “aroma,” “oak”).
+
+
+### **1.5.3 Bigram Analysis**
+
+```{r bigrams}
+# Extract bigrams
+bigrams <- df %>%
+  unnest_tokens(bigram, description, token = "ngrams", n = 2)
+
+# Remove bigrams with stop words
+bigrams_clean <- bigrams %>%
+  separate(bigram, into = c("word1", "word2"), sep = " ") %>%
+  filter(!word1 %in% stop_words$word, !word2 %in% stop_words$word) %>%
+  unite(bigram, word1, word2, sep = " ")
+
+# Get top 10 bigrams by frequency
+top_bigrams <- bigrams_clean %>%
+  count(bigram, sort = TRUE) %>%
+  slice_max(n, n = 10)
+
+# Visualization: Top 10 Bigrams
+ggplot(top_bigrams, aes(x = reorder(bigram, n), y = n)) +
+  geom_bar(stat = "identity", fill = "#C11C84") +
+  coord_flip() +
+  labs(title = "Top 10 Bigrams (After Removing Stop Words)",
+       x = "Bigrams", y = "Frequency") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(size = 10), axis.text.y = element_text(size = 10))
+```
+
+The image is a bar chart showing the top 10 most frequent bigrams (word pairs) in a dataset after removing stop words. The x-axis represents the frequency of occurrence, while the y-axis lists the bigrams. 
+
+The most frequent bigram is "black cherry," followed by "fruit flavors" and "cabernet sauvignon," which are common terms used in wine descriptions. 
+
+Other notable bigrams include "pinot noir," "black currant," and "medium bodied," indicating that the dataset likely pertains to wine reviews or descriptions. The presence of "wng yã" suggests a possible data artifact or encoding issue.
+
+### **1.5.4 Network Graph for Bigrams**
+
+```{r Network Graph}
+bigram_graph <- top_bigrams %>%
+  separate(bigram, into = c("word1", "word2"), sep = " ") %>%
+  filter(n > 2) %>%
+  graph_from_data_frame()
+
+ggraph(bigram_graph, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE) +
+  geom_node_point(color = "#C11C84", size = 5) +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+  labs(title = "Bigram Network")
+```
+
+The image represents a bigram network, which is a visualization of word pairs (bigrams) and their connections in a dataset, likely related to wine descriptions. 
+
+Each pink node represents a word, and the edges (lines) between them indicate a meaningful co-occurrence. Some notable word pairs include "black currant," "red berry," "pinot noir," and "cabernet sauvignon," all of which are common wine-related terms. The network structure highlights clusters of related terms, showing how words are frequently paired together in the given text.
+
+### **1.6. Insights and Conclusions**
+
+  - Outlier analysis revealed that price values had extreme variation, necessitating adjustments to ensure more accurate data. 
+
+  - Text preprocessing played a crucial role in reducing noise by eliminating stop words and standardizing terms through stemming and lemmatization. 
+
+  - The dataset's most frequent words, including 'wine', 'flavor', and 'fruit', reflect its primary focus on wine reviews.
+
+  - Additionally, common bigrams like 'red wine' and 'white wine' emphasize the central categories in the reviews, further highlighting the dataset's wine-related content.
+
+The word cloud and barchats, generated from the processed text highlights the most frequent domain-specific terms or jargon commonly used in wine reviews. Words such as "flavor," "wine," "fruit," "aroma," and "palate" emerge prominently, emphasizing their significance in describing the characteristics of wine. To identify these terms, the text underwent preprocessing, including the removal of common stopwords while retaining words that are strongly associated with the wine industry. This approach ensures that key descriptors relevant to wine were preserved, providing valuable insights into consumer preferences and expert evaluations. By focusing on meaningful and specialized vocabulary, this method facilitates a more targeted analysis of language in the wine industry.
+
+## **2. Task B - Sentiment Analysis**
+
+Sentiment analysis for identifying and categorizing opinions expressed in a piece of text (Description).
+
+### **2.1. Application of Lexicons**
+
+### **2.1.1 Sentiment Scoring with AFINN Lexicon**
+
+Calculate numerical sentiment scores for each review.
+
+```{r AFINN}
+# AFINN sentiment scoring with Neutral included
+afinn_sentiments <- get_sentiments("afinn")  # Load AFINN lexicon
+
+afinn_results <- data_clean %>%
+  left_join(afinn_sentiments, by = c("lemmatized_word" = "word")) %>%
+  mutate(sentiment = case_when(
+    value > 0 ~ "positive",
+    value < 0 ~ "negative",
+    TRUE ~ "neutral"  # Assign neutral where value == 0
+  )) %>%
+  count(sentiment, sort = TRUE)
+
+# Bar chart: Positive, Negative, Neutral
+ggplot(afinn_results, aes(x = sentiment, y = n, fill = sentiment)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  scale_fill_manual(values = c("positive" = "#2C6E49", "negative" = "red", "neutral" = "#AA104F")) +
+  labs(title = "AFINN Lexicon Sentiment: Positive, Negative, Neutral",
+       x = "Sentiment", y = "Word Count") +
+  theme_minimal()
+```
+
+**In this Analysis**
+
+Neutral Sentiment Dominates – The tallest bar, in dark maroon, represents neutral words, indicating that the majority of the words analyzed have no strong positive or negative sentiment.
+
+Positive vs. Negative – The green bar represents positive words, while the red bar represents negative words. There are more positive words than negative ones, but both are significantly lower compared to neutral words.
+
+This could suggest that the text analyzed is mostly neutral, with a small proportion of positive and negative sentiments. This is common in general text analysis, where many words do not carry strong emotional weight. If we omit neutral reviews, positive reviews take the dominant position in this analysis.
+
+### **2.1.2 Sentiment Analysis with Bing Lexicon**
+
+Analyze the sentiment as positive , negative using the Bing lexicon.
+
+```{r Bing}
+# Bing sentiment analysis 
+bing_sentiments <- get_sentiments("bing")  # Load Bing lexicon
+
+# Join with cleaned words for sentiment analysis
+sentiment_analysis <- data_clean %>%
+  inner_join(bing_sentiments, by = c("lemmatized_word" = "word"))
+
+# Count sentiment frequency
+sentiment_count <- sentiment_analysis %>%
+  count(sentiment, sort = TRUE)
+
+ggplot(sentiment_count, aes(x = sentiment, y = n, fill = sentiment)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = c("negative" = "#AA104F", "positive" = "#2C6E49")) +
+  labs(title = "Bing Lexicon Sentiment Distribution in Wine Reviews", x = "Sentiment", y = "Count") +
+  theme_minimal()
+```
+
+
+The bar chart represents the sentiment distribution of wine reviews using the bing lexicon, which assigns a numerical sentiment score to words. categorizing words as positive or negative based on their sentiment. 
+
+The x-axis represents the sentiment categories, while the y-axis represents the word count.The positive sentiment category has significantly more reviews compared to the negative sentiment category, indicating that most wine reviews are favorable, while fewer reviews express negative sentiments. 
+
+### **2.1.3 Sentiment Analysis with NRC Lexicon**
+
+Analyze emotions such as joy, anger, fear, etc
+
+```{r NRC}
+# Load NRC sentiment lexicon
+nrc_sentiments <- get_sentiments("nrc")  
+
+# Keep only the first occurrence per word (arbitrary choice)
+nrc_sentiments_dedup <- nrc_sentiments %>%
+  group_by(word) %>%
+  slice(1) %>%
+  ungroup()
+
+# Perform sentiment analysis with the deduplicated lexicon
+nrc_results <- data_clean %>%
+  inner_join(nrc_sentiments_dedup, by = c("lemmatized_word" = "word")) %>%
+  count(sentiment, sort = TRUE)
+
+# Bar chart: NRC Emotion Categories
+ggplot(nrc_results, aes(x = reorder(sentiment, n), y = n, fill = sentiment)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  coord_flip() +
+  labs(title = "NRC Lexicon Sentiment: Emotion Categories",
+       x = "Emotion", y = "Frequency") +
+  theme_minimal()
+```
+
+The bar chart, visualizes the frequency of different emotions in the dataset. **"Positive"** sentiment dominates, with the longest bar, indicating a strong overall positivity. 
+
+**"Negative"** follows as the second most frequent emotion, suggesting a sense of expectation. **"Joy" and "Anticipation"** sentiment are also relatively common but appear less than "Positive" and "Anticipation." 
+
+Other emotions **disgust, anger, trust, sadness, fear, and surprise** are less frequent, with much shorter bars. Overall, the text reflects a strong positive bias with notable anticipation, while other emotions are present but less prominent.
+
+### **2.2. Visualization using Sentiment Scores**
+
+### **2.2.1 Word Clouds for Positive and Negative Words**
+
+Visualize the most frequent positive and negative words.
+
+```{r Positive Word Clouds}
+# Positive, Negative and Neutral Word Clouds
+positive_words <- data_clean %>%
+  inner_join(bing_sentiments %>% filter(sentiment == "positive"), by = c("lemmatized_word" = "word")) %>%
+  count(word, sort = TRUE)
+
+negative_words <- data_clean %>%
+  inner_join(bing_sentiments %>% filter(sentiment == "negative"), by = c("lemmatized_word" = "word")) %>%
+  count(word, sort = TRUE)
+
+neutral_words <- data_clean %>%
+  left_join(bing_sentiments, by = "word") %>%
+  filter(is.na(sentiment)) %>%
+  count(word, sort = TRUE)
+
+# Generate Word Clouds
+par(mar = c(0, 0, 0, 0))
+
+wordcloud(words = positive_words$word, freq = positive_words$n, 
+          max.words = 100, colors = brewer.pal(8, "Set2"), scale = c(3, 0.5)) 
+title("Positive Word Cloud", line = -2) 
+```
+
+
+The word cloud highlights positive words, with "fresh," "soft," and "rich" as the most prominent, indicating their high frequency or importance. 
+
+Words vary in size, reflecting their relative significance. The cloud emphasizes sensory appeal with terms like "delicious," "fragrant," and "smooth," suggesting enjoyable physical experiences. 
+
+Quality and value are conveyed through words like "fine," "elegant," and "classic," implying sophistication. Emotional warmth is expressed with words like "love," "happy," and "joy." The language is rich in descriptive adjectives, enhancing the overall positive sentiment with vibrant and uplifting tones.
+
+```{r Negative Word Clouds}
+par(mar = c(0, 0, 0, 0))
+
+wordcloud(words = negative_words$word, freq = negative_words$n, 
+          max.words = 100, colors = brewer.pal(8, "RdGy"), scale = c(3, 0.5))
+title("Negative Word Cloud", line = -2) 
+```
+
+The word cloud showcases negative words, with "lemon," "rough," "bitter," "jam," "dark," and "hard" standing out as the most frequent, signaling central negative themes. 
+
+Sensory displeasure is conveyed through terms like "sour," "bitter," and "gritty," suggesting unpleasant sensory experiences. Words like "hard" and "challenging" point to difficulties and obstacles, while "tension," "lost," and "sad" indicate emotional negativity. 
+
+Terms like "crushed" and "awkward" highlight undesirable qualities, and words like "decadent" and "bland" suggest decay or staleness.
+
+```{r Neutral Word Clouds}
+par(mar = c(0, 0, 0, 0))
+
+wordcloud(words = neutral_words$word, freq = neutral_words$n, max.words = 100, colors = brewer.pal(8, "BrBG"), scale = c(3, 0.5))
+title("Neutral Word Cloud", line = -1) 
+```
+
+The word cloud ,with terms such as "fruit," "flavors," "acidity," "tannins," and various grape varieties like "sauvignon" and "pinot."  
+
+The neutral tone suggests an emphasis on objective wine descriptions rather than strong sentiments. Overall, the word cloud captures a detailed vocabulary used in wine reviews, highlighting descriptive language without overtly positive or negative connotations.
+
+### **2.2.2 Top Words by Sentiment**
+
+Display top positive and negative words.
+
+```{r Top Positive Words}
+# Top Positive
+top_positive <- positive_words %>% top_n(10, n)
+
+# Positive Bar Plot
+ggplot(top_positive, aes(x = reorder(word, n), y = n, fill = word)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  coord_flip() +
+  labs(title = "Top Positive Words", x = "Words", y = "Frequency") +
+  theme_minimal()
+```
+
+This bar chart, visualizes the frequency of the ten most common positive words which is indicate what customers appreciate. "Fresh" is the most frequently used, followed closely by "rich."
+
+"Soft" and "well" also appear prominently, while "sweet" and "crisp" show moderate frequency. "Bright," "good," "peach," and "balanced" are used less often, with shorter bars. The X-axis represents frequency, while the Y-axis lists the words. 
+
+Overall, the chart highlights the dominance of certain positive descriptors, emphasizing freshness, richness, and softness in the analyzed text.
+
+```{r Top Negative Words}
+# Top Negative Words
+top_negative <- negative_words %>% top_n(10, n)
+
+# Negative Bar Plot
+ggplot(top_negative, aes(x = reorder(word, n), y = n, fill = word)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  coord_flip() +
+  labs(title = "Top Negative Words", x = "Words", y = "Frequency") +
+  theme_minimal()
+```
+
+This bar chart, visualizes the frequency of the ten most common negative words which is  highlight frequent complaints. "Dark" is the most frequently used, followed closely by "lemon." 
+
+"Dense" and "complex" also appear prominently, indicating their significant presence in the text. "Wild," "intense," "bitter," "crushed," "smoke," and "hard" show moderate frequency, with shorter bars. The X-axis represents frequency, while the Y-axis lists the words. 
+
+Overall, the chart highlights the most prevalent negative descriptors, emphasizing darkness, intensity, and density.
+
+### **2.2.3 Boxplot of Points vs. Sentiment**
+
+```{r Points vs Sentiment}
+afinn_sentiments <- data_clean %>%
+  inner_join(get_sentiments("afinn"), by = c("lemmatized_word" = "word")) %>%
+  group_by(word) %>%
+  summarise(sentiment_score = sum(value), .groups = "drop")  # Sum sentiment per review
+
+ratings_sentiment <- afinn_sentiments %>%
+  inner_join(data_clean %>% select(word, points), by = "word")
+
+
+#Boxplot of Points vs. Sentiment
+ggplot(ratings_sentiment, aes(x = factor(points), y = sentiment_score, fill = factor(points))) +
+  geom_boxplot() +
+  labs(title = "Points vs Sentiment Score",
+       x = "Points", y = "Sentiment Score") +
+  theme_minimal()
+```
+
+The boxplot illustrates the relationship between wine ratings and sentiment scores, showing that higher-rated wines (90+ points) tend to receive more positive reviews. 
+
+Wines in the mid-range (85-90 points) display greater variability, indicating mixed opinions. Notably, top-rated wines (97-100 points) have highly positive sentiment outliers, while lower-rated wines (80-84 points) consistently receive negative feedback.
+
+This suggests a strong correlation between ratings and sentiment, with higher ratings generally reflecting better reception. However, mid-range ratings show subjective variation, highlighting differing consumer expectations. These insights can help wine producers understand how customer sentiment aligns with expert ratings(points).
+
+### **2.3. Insights and Conclusion**
+
+  - The sentiment analysis reveals that the majority of words in the dataset are neutral, indicating a largely objective tone. However, when neutral terms are omitted, positive sentiment dominates, suggesting an overall favorable perception. 
+
+  - "Fresh," "rich," and "soft" are the most frequent positive words, emphasizing sensory appeal and quality, while negative terms like "dark," "lemon," and "dense" highlight common complaints. 
+
+  - Emotion analysis further supports a strong positive bias, with anticipation and joy being prominent. The correlation between points and sentiment scores shows that higher-rated wines receive more positive feedback, while mid-range ratings exhibit mixed opinions. Overall, the analysis highlights a predominantly positive sentiment, with some negative aspects influencing customer perceptions.
+
+## **3.Task C – Topic Modelling**
+
+The goal of topic modeling is to uncover hidden themes in wine reviews, allowing us to understand common topics that wine tasters discuss. This helps identify trends, preferences, and key characteristics that influence customer opinions.
+
+### **3.1 Prepare Data for Topic Modeling**
+
+Since we have already cleaned the text in Task A, we will proceed with creating a Document-Term Matrix (DTM) for topic modeling.
+
+```{r Topic Modeling}
+# Convert the cleaned text into a Corpus
+corpus <- Corpus(VectorSource(data_clean$lemmatized_word))
+
+# Create a Document-Term Matrix (DTM)
+dtm <- DocumentTermMatrix(corpus)
+
+# Remove sparse terms to improve model efficiency
+dtm <- removeSparseTerms(dtm, 0.99)
+
+# Convert DTM to a matrix
+dtm_matrix <- as.matrix(dtm)
+```
+
+### **3.2. Apply Latent Dirichlet Allocation (LDA) for Topic Modeling**
+
+LDA is one of the most commonly used topic modeling techniques in text mining. It identifies the probability distribution of topics across documents.
+
+```{r LDA}
+row_totals <- apply(dtm, 1, sum)  # Sum of words in each document
+dtm <- dtm[row_totals > 0, ]  # Remove empty documents
+
+# Set the number of topics (K) – this can be adjusted
+num_topics <- 5 
+
+# Apply LDA model
+lda_model <- LDA(dtm, k = num_topics, control = list(seed = 1234))
+
+# Extract topic terms
+topic_terms <- tidy(lda_model, matrix = "beta")
+
+# Display the top terms for each topic
+top_terms <- topic_terms %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 10) %>%
+  ungroup()
+
+# Print top terms for each topic
+print(top_terms)
+
+```
+
+### **3.3. Visualizing the Topics**
+
+To better understand the extracted topics, we use bar charts to show the most frequent words per topic.
+```{r Visualizing Topics}
+# Visualization of Top Words per Topic
+ggplot(top_terms, aes(x = reorder_within(term, beta, topic), y = beta, fill = as.factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free_y") +
+  coord_flip() +
+  scale_x_reordered() +
+  labs(title = "Top Terms per Topic", x = "Term", y = "Beta") +
+  theme_minimal()
+```
+
+From the visualization, each topic represents a distinct theme in wine reviews. A potential interpretation could be:
+
+**Topic 1 (Red) – Ripeness & Acidity**
+  - Key terms: ripe, finish, acid, fruit, aroma, tannin, cherri
+  - Possible theme: This topic likely discusses the ripeness of fruits and their acidity levels, possibly in the context of wine or fruit tasting.
+
+**Topic 2 (Olive Green) – Aroma & Flavor Profiles**
+  - Key terms: aroma, cherri, palat, fruit, ripe, tannin, finish
+  - Possible theme: Focuses on aromas and tasting notes, possibly describing the sensory aspects of wine, food, or beverages.
+
+**Topic 3 (Teal Blue) – Acidity & Mouthfeel**
+  - Key terms: acid, finish, aroma, fruit, cherri, ripe, palat, tannin
+  - Possible theme: Discusses acidity and finish, which are important factors in wine or beverage quality. The mention of "palat" suggests it relates to mouthfeel and taste balance.
+
+**Topic 4 (Blue) – Tannin & Structure**
+  - Key terms: tannin, palat, fruit, finish, acid, cherri, aroma, ripe
+  - Possible theme: This topic likely focuses on tannins and their effect on texture, particularly in wine, as tannins influence astringency and aging potential.
+
+**Topic 5 (Pink/Purple) – Fruit-forward Characteristics**
+  - Key terms: fruit, palat, aroma, cherri, ripe, tannin, acid
+  - Possible theme: Likely describes fruit-forward wines or beverages, emphasizing flavors of cherries, ripeness, and overall fruit intensity.
+
+
+### **3.4. Insights and Conclusion**
+
+  - The topics are strongly linked to wine tasting and flavor analysis, possibly from a dataset of wine reviews or descriptions.
+  
+  - LDA has successfully grouped related tasting attributes (acidity, tannins, aroma, fruitiness) into distinct clusters.
+  
+  - These insights could be valuable for wine critics, sommeliers, or beverage analysts looking to categorize products based on tasting notes.
+
+## **4.Task D: Further Exploration**
+
+This section will extend our analysis by applying advanced techniques, integrating all dataset variables, and discussing potential future work.
+
+### **4.1. Topic Coherence Evaluation**
+
+Before using topic modeling results, we assess their quality using coherence scores.
+
+```{r Coherence Evaluation}
+# Extract beta (topic-word distributions) and ensure correct format
+beta_matrix <- exp(lda_model@beta)  # Convert log probabilities to normal scale
+
+# Extract term names from the DTM
+dtm_terms <- Terms(dtm)
+
+# Ensure beta_matrix has correct column names
+colnames(beta_matrix) <- dtm_terms
+
+# Convert DTM to a dense matrix, ensuring term names match
+dtm_matrix <- as.matrix(dtm)
+colnames(dtm_matrix) <- dtm_terms  # Align term names
+
+# Remove zero-sum columns to prevent errors
+dtm_matrix <- dtm_matrix[, colSums(dtm_matrix) > 0, drop = FALSE]
+
+# Convert to a sparse matrix format required by textmineR
+dtm_sparse <- as(dtm_matrix, "dgCMatrix")
+
+# Compute coherence scores
+coherence_scores <- CalcProbCoherence(beta_matrix, dtm_sparse)
+
+# Create a dataframe for visualization
+coherence_df <- data.frame(topic = 1:num_topics, coherence = coherence_scores)
+
+# Plot coherence scores
+ggplot(coherence_df, aes(x = factor(topic), y = coherence)) +
+  geom_bar(stat = "identity", fill = "#AA104F") +
+  labs(title = "Topic Coherence Scores", x = "Topic", y = "Coherence Score") +
+  theme_minimal()
+
+
+```
+
+The image is a bar chart showing topic coherence scores for five topics. The x-axis represents different topics (1 to 5), while the y-axis shows their coherence scores, which measure how interpretable and meaningful the topics are. 
+
+The scores appear to be negative, indicating that the topics may not be well-defined or coherent. A lower coherence score suggests that the words within a topic might not be strongly related, making interpretation difficult. 
+
+This analysis is commonly used in topic modeling (e.g., LDA) to evaluate how well topics capture meaningful word groupings.
+
+### **4.2. Interactive Topic Visualization using LDAvis**
+
+To better interpret topics, we use LDAvis, which allows interactive exploration of topic distributions.
+```{r LDAvis}
+# Extract required parameters
+phi <- exp(lda_model@beta)  # Topic-term distribution
+theta <- lda_model@gamma    # Document-topic distribution
+vocab <- colnames(dtm)
+doc_length <- rowSums(as.matrix(dtm))
+
+# Compute term frequencies
+term_frequency <- colSums(as.matrix(dtm))
+
+# Prepare JSON for LDAvis
+json_lda <- createJSON(phi = phi, theta = theta, vocab = Terms(dtm),
+                       doc.length = rowSums(as.matrix(dtm)), 
+                       term.frequency = colSums(as.matrix(dtm)))
+
+# Launch interactive visualization
+serVis(json_lda)
+
+```
+This will open an interactive browser window to explore the topic-word relationships.
+
+### **4.3. Topic Distribution Across Wine Types**
+
+To gain deeper insights, we will analyze how topics are distributed across different wine variety. This will help identify whether certain themes are more prominent in specific wine categories.
+
+```{r Topicmodeling Wine Type}
+set.seed(123)  # Ensures reproducibility
+
+# Sample 20,000 rows from the dataset
+df_sampled_topic <- data_clean %>% sample_n(20000)
+
+# Remove NA and empty entries from the text column (lemmatized words)
+df_sampled_topic <- df_sampled_topic %>%
+  filter(!is.na(lemmatized_word) & lemmatized_word != "")
+
+# Convert "lemmatized_word" into a Corpus
+corpus <- Corpus(VectorSource(df_sampled_topic$lemmatized_word))  
+
+# Create Document-Term Matrix (DTM)
+dtm <- DocumentTermMatrix(corpus)
+
+# Remove empty documents
+row_sums <- rowSums(as.matrix(dtm))  
+valid_docs <- row_sums > 0
+dtm <- dtm[valid_docs, ]
+df_filtered <- df_sampled_topic[valid_docs, ]
+
+# Ensure DTM is not empty
+if (nrow(dtm) == 0) {
+  stop("Error: No valid documents after preprocessing.")
+}
+
+# Apply LDA model
+num_topics <- 5  # Choose number of topics
+lda_model <- LDA(dtm, k = num_topics, control = list(seed = 1234))
+
+# Extract topic probabilities
+topic_probabilities <- as.data.frame(lda_model@gamma)
+
+# Assign dominant topic to each review
+df_filtered$dominant_topic <- apply(topic_probabilities, 1, which.max)
+
+# Identify the top 10 wine varieties per topic
+variety_topic_counts <- df_filtered %>%
+  group_by(variety, dominant_topic) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  arrange(dominant_topic, desc(count)) %>%
+  group_by(dominant_topic) %>%
+  slice_max(count, n = 10) %>%  # Select top 10 per topic
+  ungroup()
+
+# Generate a single plot with facets for each topic
+ggplot(variety_topic_counts, aes(x = reorder(variety, count), y = count, fill = as.factor(dominant_topic))) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  facet_wrap(~ dominant_topic, scales = "free_y") +  # Facet by dominant topic
+  labs(title = "Top 10 Wine Varieties per Topic", x = "Wine Variety", y = "Count") +
+  theme_minimal() +
+  theme(legend.position = "none")  # Remove legend for clarity
+```
+
+**Topic 1: Fruity & Floral Characteristics**
+  - Focuses on wines like Pinot Noir, Chardonnay, and Riesling with fruity and floral notes (e.g., cherry, peach, citrus).
+  - Example: "This Pinot Noir has fresh cherry and raspberry flavors with a delicate floral aroma."
+
+**Topic 2: Oak & Vanilla Influences**
+  - Wines aged in oak, such as Chardonnay and Cabernet Sauvignon, feature vanilla, butter, and spice flavors.
+  - Example: "This Chardonnay has a buttery texture with vanilla and toasted oak notes."
+
+**Topic 3: Earthy & Tannic Wines**
+  - Old World wines like Nebbiolo and Bordeaux blends with earthy, tannic characteristics.
+  - Example: "A Bordeaux blend with firm tannins, earthy tobacco notes, and a mineral finish."
+
+**Topic 4: Bright & Crisp White Wines**
+  - High-acid white wines such as Sauvignon Blanc and Riesling, known for crisp, refreshing qualities.
+  - Example: "A lively Sauvignon Blanc with zesty citrus notes and crisp acidity."
+
+**Topic 5: Bold & Spicy Red Wines**
+  - Bold reds like Syrah and Zinfandel with spicy, smoky, and deep fruit flavors.
+  - Example: "A bold Syrah with blackberry notes, peppery spice, and a smoky finish."
+
+### **4.4. Insights and Conclusion**
+
+**Insights and Conclusion**
+The topic coherence scores from the bar chart indicate that the extracted topics might not be highly distinct or strongly coherent, as most scores are negative. This suggests that some topics could have overlapping themes, or the model may need refinement to improve clarity.
+
+Despite this, the identified topics provide meaningful insights into different wine flavor profiles:
+
+  1. Fruity & Floral Characteristics – Light, aromatic wines like Pinot Noir and Riesling.
+  2. Oak & Vanilla Influences – Wines aged in oak with rich vanilla and spice notes.
+  3. Earthy & Tannic Wines – Structured, Old World wines with deep tannins and earthy flavors.
+  4. Bright & Crisp White Wines – High-acid, refreshing whites such as Sauvignon Blanc.
+  5. Bold & Spicy Red Wines – Powerful reds like Syrah and Zinfandel with smoky and spicy elements.
+
+**Conclusion**
+The topic modeling successfully categorized wine descriptions into distinct flavor profiles, helping to understand wine characteristics better. However, the low coherence scores suggest room for improvement. Adjustments such as fine-tuning topic numbers, improving preprocessing (e.g., removing noise words), or using alternative topic modeling techniques (e.g., BERTopic or NMF) may enhance the model's interpretability and coherence.
+
+
+### **4.5. Future Work and Recommendations**
+
+**Sentiment Analysis Refinement**
+
+Future improvements could involve fine-tuning the sentiment analysis model with domain-specific wine-related lexicons or custom-trained classifiers to improve accuracy in sentiment classification.
+
+**Advanced Topic Modeling**
+
+Using more sophisticated models like BERTopic or hierarchical clustering could provide better topic differentiation and reveal deeper semantic relationships.
+
+**Wine Feature Analysis**
+
+Investigate how specific wine features (e.g., acidity, tannins, flavor notes) influence overall sentiment, potentially providing wine producers with insights to improve their products.
+
+**User Feedback Incorporation**
+
+Future work could involve incorporating user demographic data (age, location, etc.) to understand how different types of tasters perceive wines differently, adding a layer of segmentation to the analysis.
+
+**Cross-Model Comparison**
+
+Compare the results from sentiment analysis and topic modeling to see how well the sentiment aligns with the topics identified, providing a clearer understanding of the relationship between wine descriptions and tasters’ emotions.
+
+### **4.6 Conclusion**
+
+This study applied text mining, sentiment analysis, and topic modeling to wine reviews, revealing key insights into wine characteristics and consumer sentiment. 
+
+While the results were meaningful, refining topic coherence, expanding dataset coverage, and integrating additional features could further enhance the analysis. Future research should focus on leveraging advanced models and exploring new segmentation techniques for a deeper understanding of wine consumer preferences.
+
+
+
+
